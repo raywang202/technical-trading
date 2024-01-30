@@ -2,9 +2,11 @@ import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import ssl
+
+# Part 1
 
 # A data-mining exercise
 # Let's see what happens when we just trade repeatedly off of technical
@@ -47,6 +49,8 @@ all_stocks = data.columns.drop(labels='Price Date')
 data = data[data.index < '2024-01-01']
 
 
+# Part 2
+
 # Define a function that outputs historical performance between two dates
 # Note that this specific function does not work for start and end dates that
 # cross a year, e.g. a Dec-Jan seasonal trend
@@ -75,16 +79,16 @@ def seasonal_return(data, symbol, start_date, end_date, first_year, last_year):
         'Init Price','Final Date','Final Price','Return'])
     return df
 
-all_returns = []
+stock_returns_list = []
 start_calendar = '01-28'
 end_calendar = '02-02'
 start_year = 2014
 end_year = 2023
 for stock in all_stocks:
-    all_returns.append(seasonal_return(data, stock, start_calendar, 
+    stock_returns_list.append(seasonal_return(data, stock, start_calendar, 
     end_calendar, start_year, end_year))
 
-seasonal_returns = pd.concat(all_returns)
+seasonal_returns = pd.concat(stock_returns_list)
 
 def sortino(df, strat_name, risk_free, threshold):
     excess_return = df[strat_name]-df[risk_free]
@@ -102,20 +106,68 @@ def return_stats(x, risk_free_rate = 0):
     d['downside dev'] = 0 if downsides.count()==0 else downsides.std()
     upsides = x[x['Return'] > risk_free_rate]['Return']
     d['upside dev'] = 0 if upsides.count()==0 else upsides.std()
-    return pd.Series(d, index=['N','avg r','vol','downside dev','upside dev'])
+    d['up'] = sum(x['Return']>risk_free_rate)
+    return pd.Series(d, index = ['N','avg r','vol','downside dev','upside dev',
+        'up'])
 
 # N is number of observations, avg r is average return for going LONG,
 # vol is std dev of returns, downside/upside dev are corresponding deviations
-# used to calculate Sortino Ratio
+# used to calculate Sortino Ratio, and up is number of observations that are
+# above the risk free rate
 symbol_stats = seasonal_returns.groupby('Symbol').apply(return_stats, risk_free_rate = 0)
 
 symbol_stats['Sharpe Long'] = symbol_stats['avg r']/symbol_stats['vol']
 symbol_stats['Sharpe Short'] = -symbol_stats['avg r']/symbol_stats['vol']
 symbol_stats['Sortino Long'] = symbol_stats['avg r']/symbol_stats['downside dev']
 symbol_stats['Sortino Short'] = -symbol_stats['avg r']/symbol_stats['upside dev']
+symbol_stats['Winrate Long'] = symbol_stats['up']/symbol_stats['N']
+
 
 # Identify the five most profitable seasonal trades for long/short
 # Restrict to samples that we actually have 10 years of full data for
 sub_stats = symbol_stats[symbol_stats.N==10]
 best_long_trades = sub_stats.sort_values(by='avg r',ascending= False).iloc[0:5]
 best_short_trades = sub_stats.sort_values(by='avg r',ascending= True).iloc[0:5]
+
+
+# Part 3
+
+# Data mine amongst all stocks, for a range of holding periods
+
+# Hold between 5 to 30 days
+hold_range = range(5,7+1,1)
+start_calendar = '01-29'
+start_year = 2014
+end_year = 2023
+
+all_returns_list = []
+
+for hold_length in hold_range:
+    # Use current year of 2024: this only affects whether we consider Feb 29
+    # for holding windows in outputting results, but is irrelevant when looking
+    # at historicals
+    start_calendar_2024 = datetime.strptime("2024-"+start_calendar, "%Y-%m-%d")
+    end_calendar = (start_calendar_2024+timedelta(days=hold_length)
+        ).strftime('%m-%d')
+
+    stock_returns_list = []
+    for stock in all_stocks:
+        stock_returns_list.append(seasonal_return(data, stock, start_calendar, 
+        end_calendar, start_year, end_year))
+
+    seasonal_returns = pd.concat(stock_returns_list)
+    symbol_stats = seasonal_returns.groupby('Symbol').apply(
+        return_stats, risk_free_rate = 0)
+
+    symbol_stats['Sharpe Long'] = symbol_stats['avg r']/symbol_stats['vol']
+    symbol_stats['Sharpe Short'] = -symbol_stats['avg r']/symbol_stats['vol']
+    symbol_stats['Sortino Long'] = symbol_stats['avg r']/symbol_stats['downside dev']
+    symbol_stats['Sortino Short'] = -symbol_stats['avg r']/symbol_stats['upside dev']
+
+    symbol_stats['hold length'] = hold_length
+    all_returns_list.append(symbol_stats)
+
+all_returns = pd.concat(all_returns_list)
+
+# Approximately annualize the returns (365 days)
+all_returns['annl r'] = all_returns['avg r']*365/all_returns['hold length']
