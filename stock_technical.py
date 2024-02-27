@@ -5,6 +5,7 @@ import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import numpy as np
 import ssl
+from itertools import product
 
 # Part 1
 
@@ -30,7 +31,7 @@ tickers = list(df['Symbol'])
 start_date = '1989-01-01'
 end_date = '2024-01-03'  # Get data a few days past end of year to backfill
 
-# Pull off Yahoo finance the adjusted close prices
+# Either pull from Yahoo finance, or for read the pre-downloaded CSV
 # data = pd.DataFrame(yf.download(tickers, start_date, end_date)['Adj Close'])
 # data.reset_index().to_csv("S&P500-adjusted-close.csv", index=False)
 data = pd.read_csv('S&P500-adjusted-close.csv')
@@ -57,6 +58,9 @@ data = data[data.index < '2024-01-01']
 
 def seasonal_return(data, symbol, start_date, end_date, first_year, last_year):
     data_list = []
+    # Deal with Feb 29: assign start/end dates to Mar 1
+    if start_date == '02-29': start_date = '03-01'
+    if end_date == '02-29': end_date = '03-01'
     for year in range(first_year, (last_year+1)):
         full_start_date = str(year)+'-'+start_date
         full_end_date = str(year)+'-'+end_date
@@ -79,9 +83,13 @@ def seasonal_return(data, symbol, start_date, end_date, first_year, last_year):
         'Init Price','Final Date','Final Price','Return'])
     return df
 
+
+# An example of finding the best trade given a certain start/end date.
+# In this case, Feb 11-16, using data from 2014-2023 (last 10 years)
+
 stock_returns_list = []
-start_calendar = '01-28'
-end_calendar = '02-02'
+start_calendar = '02-11'
+end_calendar = '02-16'
 start_year = 2014
 end_year = 2023
 for stock in all_stocks:
@@ -104,7 +112,7 @@ def return_stats(x, risk_free_rate = 0):
     d['vol'] = x['Return'].std()
     downsides = x[x['Return'] < risk_free_rate]['Return']
     d['downside dev'] = 0 if downsides.count()==0 else downsides.std()
-    upsides = x[x['Return'] > risk_free_rate]['Return']
+    upsides = x[-x['Return'] < risk_free_rate]['Return']
     d['upside dev'] = 0 if upsides.count()==0 else upsides.std()
     d['up'] = sum(x['Return']>risk_free_rate)
     return pd.Series(d, index = ['N','avg r','vol','downside dev','upside dev',
@@ -123,8 +131,8 @@ symbol_stats['Sortino Short'] = -symbol_stats['avg r']/symbol_stats['upside dev'
 symbol_stats['Winrate Long'] = symbol_stats['up']/symbol_stats['N']
 
 
-# Identify the five most profitable seasonal trades for long/short
-# Restrict to samples that we actually have 10 years of full data for
+# Identify the five most profitable seasonal trades for long/short within the
+# window. Restrict to samples that we actually have 10 years of data for
 sub_stats = symbol_stats[symbol_stats.N==10]
 best_long_trades = sub_stats.sort_values(by='avg r',ascending= False).iloc[0:5]
 best_short_trades = sub_stats.sort_values(by='avg r',ascending= True).iloc[0:5]
@@ -132,42 +140,247 @@ best_short_trades = sub_stats.sort_values(by='avg r',ascending= True).iloc[0:5]
 
 # Part 3
 
-# Data mine amongst all stocks, for a range of holding periods
+# NOTE: Running this cell will take ~20 minutes. Use the saved CSV file instead
 
-# Hold between 5 to 30 days
-hold_range = range(5,7+1,1)
-start_calendar = '01-29'
-start_year = 2014
-end_year = 2023
+# Implement a strategy that takes the top 5 long and short seasonal patterns,
+# every two-week window. Constrain the patterns to be either 1, 2, or 4 weeks long,
+# and also require a pattern to have at least 6/10 wins in the last 10 years.
+# How would this strategy have done in 2023, if we used "patterns" from 2013-2022?
+
+# First, restrict to stocks that actually have prices back in 2013 (not NA on
+# Jan 1, 2013, even when backfilling). This drops to 461 stocks
+sub_cols = data.columns[data.loc['2013-01-01'].notna()]
+sub_stocks = data[sub_cols].columns.drop(labels='Price Date')
+
+sub_data = data[sub_cols][data.index>='2013-01-01']
+
+hold_range = [7, 14] # hold for a fixed number of weeks, up to a month
+delay_range = [0, 5, 10]
+start_months = list(range(1,12+1))
+start_days = ['-01','-15']
+initial_dates = [str(i)+j for i, j in product(start_months,start_days)]
+start_year = 2013
+end_year = 2022
 
 all_returns_list = []
 
-for hold_length in hold_range:
-    # Use current year of 2024: this only affects whether we consider Feb 29
-    # for holding windows in outputting results, but is irrelevant when looking
-    # at historicals
-    start_calendar_2024 = datetime.strptime("2024-"+start_calendar, "%Y-%m-%d")
-    end_calendar = (start_calendar_2024+timedelta(days=hold_length)
-        ).strftime('%m-%d')
+# Look up to two weeks forward
+for initial_date in initial_dates:
 
-    stock_returns_list = []
-    for stock in all_stocks:
-        stock_returns_list.append(seasonal_return(data, stock, start_calendar, 
-        end_calendar, start_year, end_year))
+    initial_calendar_2023 = datetime.strptime("2023-"+initial_date, "%Y-%m-%d")
 
-    seasonal_returns = pd.concat(stock_returns_list)
-    symbol_stats = seasonal_returns.groupby('Symbol').apply(
-        return_stats, risk_free_rate = 0)
+    # Delay refers to how many days after the 1st or 15th we start the trade
+    # This technically means we will never start a position on the 29-31st
+    for delay in delay_range:
+        start_calendar_2023 = initial_calendar_2023+timedelta(days=delay)
+        start_calendar = start_calendar_2023.strftime('%m-%d')
 
-    symbol_stats['Sharpe Long'] = symbol_stats['avg r']/symbol_stats['vol']
-    symbol_stats['Sharpe Short'] = -symbol_stats['avg r']/symbol_stats['vol']
-    symbol_stats['Sortino Long'] = symbol_stats['avg r']/symbol_stats['downside dev']
-    symbol_stats['Sortino Short'] = -symbol_stats['avg r']/symbol_stats['upside dev']
+        for hold_length in hold_range:
+            end_calendar = (start_calendar_2023+timedelta(days=hold_length)
+                ).strftime('%m-%d')
+            stock_returns_list = []
 
-    symbol_stats['hold length'] = hold_length
-    all_returns_list.append(symbol_stats)
+            for stock in sub_stocks:
+                stock_returns_list.append(seasonal_return(sub_data, stock,
+                    start_calendar, end_calendar, start_year, end_year))
+
+            seasonal_returns = pd.concat(stock_returns_list)
+            symbol_stats = seasonal_returns.groupby('Symbol').apply(
+                return_stats, risk_free_rate = 0)
+            symbol_stats['trade window']=initial_date
+            symbol_stats['start date'] = start_calendar_2023
+            symbol_stats['end date'] = end_calendar
+            symbol_stats['Sharpe Long'] = symbol_stats['avg r']/symbol_stats['vol']
+            symbol_stats['Sharpe Short'] = -symbol_stats['avg r']/symbol_stats['vol']
+            symbol_stats['Sortino Long'] = symbol_stats['avg r']/symbol_stats['downside dev']
+            symbol_stats['Sortino Short'] = -symbol_stats['avg r']/symbol_stats['upside dev']
+
+            symbol_stats['hold length'] = hold_length
+            all_returns_list.append(symbol_stats)
 
 all_returns = pd.concat(all_returns_list)
 
-# Approximately annualize the returns (365 days)
-all_returns['annl r'] = all_returns['avg r']*365/all_returns['hold length']
+# Approximately annualize returns
+all_returns['annualized r'] = (all_returns['avg r'] * 365 / 
+    all_returns['hold length'])
+
+# all_returns.to_csv('seasonal_trades.csv')
+
+# Part 4
+
+# Read in the CSV: running the code takes about 20 minutes
+all_returns = pd.read_csv('seasonal_trades.csv')
+# Identify which long/short positions we would take. Take the top 5 long/short for each trade window
+long_positions = all_returns[(all_returns['annualized r']>0.4) & (all_returns.up>=6)].sort_values(
+    'Sharpe Long',ascending=False).groupby('trade window').head(5)
+short_positions = all_returns[(all_returns['annualized r']<0.4) & (all_returns.up<=4)].sort_values(
+    'Sharpe Short',ascending=False).groupby('trade window').head(5)
+
+
+# Note that within the same trade window, we may end up trading the same stock
+# multiple times due to the delay, e.g. we short COF from Jan 11-25 but also
+# from Jan 6 to Feb 23. This can happen if a stock endures sustained movements
+# in one direction, and we would probably avoid doubling down in reality. But for
+# now, let's just look at the results of our trades in 2023
+
+long_trades = long_positions[['Symbol','start date','end date']]
+long_trades['buy date']=long_trades['start date']
+long_trades['sell date']="2023-"+long_trades['end date']
+
+# Results of long trades (invert order of buy/sell dates if shorting)
+def long_trade_result(data, symbol, buy_date, sell_date):
+    [buy_price, actual_buy_date] = data.loc[buy_date][[symbol,'Price Date']]
+    [sell_price, actual_sell_date] = data.loc[sell_date][[symbol,'Price Date']]
+    trade_return =  (sell_price/buy_price)-1
+    return pd.Series({'Symbol':symbol,'Buy Signal Date':buy_date,
+        'Actual Buy Date':actual_buy_date,'Buy Price':buy_price,
+        'Sell Signal Date':sell_date,'Actual Sell Date':actual_sell_date,
+        'Actual Sell Price':sell_price,'Return':trade_return},
+        index = ['Symbol','Buy Signal Date','Actual Buy Date','Buy Price',
+        'Sell Signal Date','Actual Sell Date','Actual Sell Price','Return'])
+
+long_trade_results_list = []
+
+for row in range(long_trades.shape[0]):
+    long_trade_results_list.append(
+        long_trade_result(data, long_trades.iloc[row].Symbol,
+            long_trades.iloc[row]['buy date'],
+            long_trades.iloc[row]['sell date']))
+
+long_trade_results = pd.DataFrame(long_trade_results_list)
+
+short_trades = short_positions[['Symbol','start date','end date']]
+short_trades['buy date']="2023-"+short_trades['end date']
+short_trades['sell date']=short_trades['start date']
+
+short_trade_results_list = []
+
+for row in range(short_trades.shape[0]):
+    short_trade_results_list.append(
+        long_trade_result(data, short_trades.iloc[row].Symbol,
+            short_trades.iloc[row]['buy date'],
+            short_trades.iloc[row]['sell date']))
+
+short_trade_results = pd.DataFrame(short_trade_results_list)
+
+# Part 5
+
+## Let's summarize these results
+
+# Long position results
+
+# Average returns: 3.14% returns
+long_trade_results['Return'].mean()
+
+# Sharpe (assuming risk-free return is just zero): 0.52
+long_trade_results['Return'].mean()/long_trade_results['Return'].std()
+
+# Sortino Ratio: 1.35
+long_trade_results['Return'].mean()/long_trade_results[long_trade_results['Return']<0]['Return'].std()
+
+# Short position results
+
+# Average returns: 1.14% returns
+short_trade_results['Return'].mean()
+
+# Sharpe (assuming risk-free return is just zero): 0.15
+short_trade_results['Return'].mean()/short_trade_results['Return'].std()
+
+# Sortino Ratio: 0.23
+short_trade_results['Return'].mean()/short_trade_results[long_trade_results['Return']<0]['Return'].std()
+
+# Compare to what we may have expected if 2023 played out like the historicals used to select:
+long_positions['avg r'].mean() # Avg return of 4.02%
+long_positions['Sharpe Long'].quantile(q=0.01) # 1%ile of Sharpe ratios is 0.94
+long_positions['Sortino Long'].quantile(q=0.01) # 1%ile of Sortino ratios is 2.47
+
+short_positions['avg r'].mean() # Avg return of 4.72%
+short_positions['Sharpe Short'].quantile(q=0.01) # 5%ile of Sharpe ratios is 0.49
+short_positions['Sortino Short'].quantile(q=0.01) # 1%ile of Sortino ratios is 0.86
+
+# Clearly our 2023 results dramatically underperform what we may have expected,
+# with our Sharpe/Sortino ratios worse than even the 1st percentile
+# This makes sense: we have engaged in multiple hypothesis testing and "cherry
+# picked" the best 
+
+# Now what would have happened if we had just bought and held the S&P500 during
+# the same period? Since we know that in retrospect, 2023 was a great year for
+# the S&P500, let's compute the returns/Sharpe ratio if we had taken long S&P500
+# trades (regardless of long/short of the stock) at the same times,
+# but over the last 10 years (2014-2023)
+
+spx = pd.DataFrame(yf.download('^SPX', '2014-01-01', '2024-01-03')['Adj Close'])
+all_dates = pd.date_range('2014-01-01', '2024-01-03')
+spx['Price Date'] = spx.index
+spx = spx.reindex(all_dates, method='bfill')
+spx = spx[spx.index < '2024-01-01']
+
+# Long trades
+sp500_returns_long_list = []
+
+# Long trade dates
+for idx in range(long_trades.shape[0]):
+    buy_date = long_trades.iloc[idx]['buy date']
+    sell_date = long_trades.iloc[idx]['sell date']
+    buy_price = spx.loc[buy_date]['Adj Close']
+    sell_price = spx.loc[sell_date]['Adj Close']
+    sp500_return = sell_price/buy_price-1
+    sp500_returns_long_list.append([idx,buy_date,sell_date,sp500_return])
+
+sp500_returns = pd.DataFrame(sp500_returns_long_list,
+    columns=['Index','Buy Date','Sell Date','SP500 Return'])
+
+# Avg SP500 returns during the same long positions
+sp500_returns['SP500 Return'].mean() # 1.32% avg return
+
+# Sharpe (assuming risk-free return is just zero): 0.48
+sp500_returns['SP500 Return'].mean()/sp500_returns['Return'].std()
+
+# Sortino Ratio: 1.10
+sp500_returns['SP500 Return'].mean()/(sp500_returns[
+    sp500_returns['SP500 Return']<0]['SP500 Return'].std())
+
+# Short trades
+sp500_returns_short_list = []
+
+# Long trade dates
+for idx in range(short_trades.shape[0]):
+    buy_date = short_trades.iloc[idx]['buy date']
+    sell_date = short_trades.iloc[idx]['sell date']
+    buy_price = spx.loc[buy_date]['Adj Close']
+    sell_price = spx.loc[sell_date]['Adj Close']
+    sp500_return = sell_price/buy_price-1
+    sp500_returns_short_list.append([idx,buy_date,sell_date,sp500_return])
+
+sp500_returns_short_dates = pd.DataFrame(sp500_returns_short_list,
+    columns=['Index','Buy Date','Sell Date','SP500 Return'])
+
+
+# Avg SP500 returns during the same long positions
+sp500_returns_short_dates['SP500 Return'].mean() # 1.16% avg return
+
+# Sharpe (assuming risk-free return is just zero): 0.19
+sp500_returns_short_dates['SP500 Return'].mean()/sp500_returns_short_dates['SP500 Return'].std()
+
+# Sortino Ratio: 0.75
+sp500_returns['SP500 Return'].mean()/(sp500_returns_short_dates[
+    sp500_returns_short_dates['SP500 Return']<0]['SP500 Return'].std())
+
+
+# So: taking short seasonal trades during a bull market (which 2023 was in
+# retrospect, with 24% returns from Jan 3, 2023 to Jan 3, 2024) performs
+# significantly worse than just going long the S&P500 over those same periods.
+# However, taking long seasonal positions does seem to outperform just going
+# long the S&P500 over those same periods (3.14% avg returns over the holding
+# period compared to 1.32% for the S&P 500), although due to the increased
+# volatility the Sharpe/Sortino ratios are only slightly better. But, both
+# long/short seasonal strategies perform perform significantly worse than what
+# would be expected from the prior 10 years' performance, which is to be
+# expected: we are a bit guilty of finding patterns in the noise and
+# cherry-picking the best results.
+
+# But why did the long seasonal strategy do so much better compared to the short
+# strategy? Maybe we should explore a "veto" option for long/short strategies:
+# use our simple long/short criteria for identifying the top X stocks for each
+# trading window, but then take contemporaneous data (i.e. from the same year
+# instead of from previous years) to identify whether we actually trade.
