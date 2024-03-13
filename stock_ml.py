@@ -49,7 +49,7 @@ def seasonal_return(data, symbol, start_date, end_date, first_year, last_year):
                           end_price, returns])
 
     df = pd.DataFrame(data_list, columns=['Symbol', 'Year', 'Init Date',
-        'Init Price', 'Final Date', 'Final Price', 'Return'])
+                                          'Init Price', 'Final Date', 'Final Price', 'Return'])
     return df
 
 
@@ -64,7 +64,7 @@ def return_stats(x, risk_free_rate=0):
     d['upside dev'] = 0 if upsides.count() == 0 else upsides.std()
     d['up'] = sum(x['Return'] > risk_free_rate)
     return pd.Series(d, index=['N', 'avg r', 'vol', 'downside dev',
-        'upside dev', 'up'])
+                               'upside dev', 'up'])
 
 
 # Historical rate of stock going up (i.e. winrate if we are long)
@@ -159,7 +159,7 @@ for trade_year in [2019, 2020, 2021]:
 
                 for stock in sub_stocks:
                     stock_returns_list.append(seasonal_return(
-                        sub_data, stock,start_calendar, end_calendar,
+                        sub_data, stock, start_calendar, end_calendar,
                         start_year, end_year))
 
                 seasonal_returns = pd.concat(stock_returns_list)
@@ -169,15 +169,14 @@ for trade_year in [2019, 2020, 2021]:
                     '%Y-%m-%d')
                 symbol_stats['start date'] = start_calendar_year
                 symbol_stats['end date'] = end_calendar
-                symbol_stats['Sharpe Long'] = (symbol_stats['avg r']/
-                    symbol_stats['vol'])
-                symbol_stats['Sharpe Short'] = -(symbol_stats['avg r']/
-                    symbol_stats['vol'])
+                symbol_stats['Sharpe Long'] = (symbol_stats['avg r'] /
+                                               symbol_stats['vol'])
+                symbol_stats['Sharpe Short'] = -(symbol_stats['avg r'] /
+                                                 symbol_stats['vol'])
                 symbol_stats['hold length'] = hold_length
                 all_returns_list.append(symbol_stats)
 
 all_returns = pd.concat(all_returns_list)
-
 
 # Import the CSV of all returns
 all_returns = pd.read_csv('seasonal_trades_2019_2021.csv')
@@ -194,8 +193,8 @@ all_returns['trade year'] = all_returns['trade window'].str.slice(0, 4)
 # Sharpe ratio using historical seasonal trades, and select the top 10 for each
 # trade window
 
-long_positions = all_returns[(all_returns['annualized r'] > 0.4) & 
-(all_returns.up >= 6) & (all_returns['avg r'] > .01)].sort_values(
+long_positions = all_returns[(all_returns['annualized r'] > 0.4) &
+                             (all_returns.up >= 6) & (all_returns['avg r'] > .01)].sort_values(
     'Sharpe Long', ascending=False).groupby('trade window').head(10)
 
 # Define the feature functions
@@ -216,6 +215,7 @@ long_positions['past5yr'] = long_positions.apply(lambda row: historical_up_rate(
 
 data_no_backfill = data[data.index == data['Price Date']]
 
+
 # Note that these functions are shifted by 1 day backwards, to avoid knowing the
 # current day's closing price when making a trade decision during the day
 
@@ -223,9 +223,11 @@ def get_ewm_vol(data, symbol, date, span=10):
     stock_rets = np.log(data[symbol] / data[symbol].shift(1)).shift(1)
     return stock_rets.ewm(span).std().loc[date]
 
+
 long_positions['ewm_vol'] = long_positions.apply(lambda row: get_ewm_vol(
     data_no_backfill, row['Symbol'], data.loc[row['start date']]['Price Date'],
     30), axis=1)
+
 
 # EWMA of price: compare between a long/short window to determine
 # whether the signal is long
@@ -234,22 +236,24 @@ def get_ewm_momentum(data, symbol, date, long_window, short_window):
     long_ewma = data[symbol].ewm(long_window).mean().shift(1).loc[date]
     return np.log(short_ewma / long_ewma)
 
+
 long_positions['long_momentum'] = long_positions.apply(
     lambda row: get_ewm_momentum(data_no_backfill, row['Symbol'],
-        data.loc[row['start date']]['Price Date'],
-        long_window=10, short_window=5), axis=1)
+                                 data.loc[row['start date']]['Price Date'],
+                                 long_window=10, short_window=5), axis=1)
+
 
 # Generates an X-day back return. With days_back = 1, it is yesterday's observed
 # return
 
 def get_recent_return(data, symbol, date, days_back=1):
-    return np.log(data[symbol]/data[symbol].shift(days_back)).shift(1).loc[date]
+    return np.log(data[symbol] / data[symbol].shift(days_back)).shift(1).loc[date]
+
 
 long_positions['yesterday_ret'] = long_positions.apply(
     lambda row: get_recent_return(data_no_backfill, row['Symbol'],
                                   data.loc[row['start date']]['Price Date'],
                                   days_back=1), axis=1)
-
 
 # Get SP500 EWMA and yesterday returns, making sure not to backfill
 
@@ -260,17 +264,18 @@ spx_bfill = spx.reindex(all_dates, method='bfill')
 
 long_positions['sp500_ewm_vol'] = long_positions.apply(
     lambda row: get_ewm_vol(spx, 'Adj Close',
-        data.loc[row['start date']]['Price Date'], 10), axis=1)
+                            data.loc[row['start date']]['Price Date'], 10), axis=1)
 
 long_positions['sp500_ewma'] = long_positions.apply(
     lambda row: get_ewm_momentum(spx, 'Adj Close',
-     data.loc[row['start date']]['Price Date'], 
-     long_window=10, short_window=5), axis=1)
+                                 data.loc[row['start date']]['Price Date'],
+                                 long_window=10, short_window=5), axis=1)
 
 long_positions['sp500_yest_ret'] = long_positions.apply(
     lambda row: get_recent_return(spx, 'Adj Close',
-        data.loc[row['start date']]['Price Date'],
-        days_back=1), axis=1)
+                                  data.loc[row['start date']]['Price Date'],
+                                  days_back=1), axis=1)
+
 
 # Get the actual returns for the start/end date
 
@@ -280,7 +285,7 @@ def get_actual_return(data, symbol, start_date, end_date):
 
 long_positions['actual_return'] = long_positions.apply(
     lambda row: get_actual_return(data, row['Symbol'], row['start date'],
-        row['trade year'] + '-' + row['end date']), axis=1)
+                                  row['trade year'] + '-' + row['end date']), axis=1)
 
 # Part 3: Apply the random forest
 
@@ -307,12 +312,11 @@ y = long_positions['outcome'].values
 
 # Split data into training/testing sets
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, train_size=0.75, shuffle=False, random_state = np.random.seed(5555))
+    X, y, train_size=0.75, shuffle=False, random_state=np.random.seed(5555))
 
-model = RandomForestClassifier(random_state = np.random.seed(5555))
+model = RandomForestClassifier(random_state=np.random.seed(5555))
 
-model.fit(X_train,y_train)
-
+model.fit(X_train, y_train)
 
 # Generate a ROC curve as well as some classification reports
 # The ROC curve is generally above y=x (which we would hope would be the case!)
@@ -335,9 +339,8 @@ plt.show()
 
 print(classification_report(y_test, y_pred,
                             target_names=['no_trade', 'trade']))
+# y_test.mean()
 
-print(classification_report(y_test, np.repeat(1, len(y_test)),
-                            target_names=['no_trade_no_ML', 'trade_no_ML']))
 
 # Looking at the differences in the two classification reports, we see that
 # the ML model improves precision (true positives/classified positives)
@@ -350,6 +353,18 @@ print(classification_report(y_test, np.repeat(1, len(y_test)),
 # proposed every 2 weeks, which means there is generally no shortage of trade
 # opportunities.
 
+# But wait, this seems a bit too easy. It is likely that stock movements are
+# serially correlated, driven by concurrent broad market movements: we may
+# have split the training and testing sets such that there are data from the same
+# time period (trading window) in both sets, just for different (correlated)
+# stocks. We can try to address this problem by manually dividing the testing
+# and training sets: For simplicity, set the test sets to be Jan 1 to Apr 15
+# in 2019, May 1 to Aug 15 in 2020, and Sep 1 to Dec 15 in 2021 for trading
+# windows, and the training sets to be everything else (I don't establish a gap
+# or "embargo" between the trade dates, although some of the EWMA indicators
+# might have some spillage across adjacent periods).
+
+X_train
 
 # Part 4: Applying the model out of sample
 
@@ -379,7 +394,7 @@ for trade_year in [2022, 2023]:
 
                 for stock in sub_stocks:
                     stock_returns_list.append(seasonal_return(
-                        sub_data, stock,start_calendar, end_calendar,
+                        sub_data, stock, start_calendar, end_calendar,
                         start_year, end_year))
 
                 seasonal_returns = pd.concat(stock_returns_list)
@@ -389,20 +404,19 @@ for trade_year in [2022, 2023]:
                     '%Y-%m-%d')
                 symbol_stats['start date'] = start_calendar_year
                 symbol_stats['end date'] = end_calendar
-                symbol_stats['Sharpe Long'] = (symbol_stats['avg r']/
-                    symbol_stats['vol'])
-                symbol_stats['Sharpe Short'] = -(symbol_stats['avg r']/
-                    symbol_stats['vol'])
+                symbol_stats['Sharpe Long'] = (symbol_stats['avg r'] /
+                                               symbol_stats['vol'])
+                symbol_stats['Sharpe Short'] = -(symbol_stats['avg r'] /
+                                                 symbol_stats['vol'])
                 symbol_stats['hold length'] = hold_length
                 later_returns_list.append(symbol_stats)
-
 
 later_returns = pd.concat(later_returns_list)
 
 # Annualize returns
 later_returns['annualized r'] = (later_returns['avg r'] * 365 /
                                  later_returns['hold length'])
-later_returns['trade year']=later_returns['trade window'].str.slice(0,4)
+later_returns['trade year'] = later_returns['trade window'].str.slice(0, 4)
 
 # later_returns.to_csv('seasonal_trades_2022_2023.csv')
 
@@ -414,21 +428,20 @@ later_long_positions = later_returns[(later_returns['annualized r'] > 0.5) &
     'Sharpe Long', ascending=False).groupby('trade window').head(10)
 
 # Calculate the feature values
-later_long_positions['past3yr']=later_long_positions.apply(lambda row: historical_up_rate(
-    data, row['Symbol'],row['start date'][5:10], row['end date'], 
-    int(row['trade year'])-3,int(row['trade year'])-1), axis = 1)
+later_long_positions['past3yr'] = later_long_positions.apply(lambda row: historical_up_rate(
+    data, row['Symbol'], row['start date'][5:10], row['end date'],
+    int(row['trade year']) - 3, int(row['trade year']) - 1), axis=1)
 
-later_long_positions['past5yr']=later_long_positions.apply(lambda row: historical_up_rate(
-    data, row['Symbol'],row['start date'][5:10], row['end date'], 
-    int(row['trade year'])-5,int(row['trade year'])-1), axis = 1)
-
+later_long_positions['past5yr'] = later_long_positions.apply(lambda row: historical_up_rate(
+    data, row['Symbol'], row['start date'][5:10], row['end date'],
+    int(row['trade year']) - 5, int(row['trade year']) - 1), axis=1)
 
 later_long_positions['ewm_vol'] = later_long_positions.apply(
     lambda row: get_ewm_vol(data, row['Symbol'], row['start date'], 30), axis=1)
 
 later_long_positions['long_momentum'] = later_long_positions.apply(
     lambda row: get_ewm_momentum(data, row['Symbol'], row['start date'],
-        long_window=10, short_window=5), axis=1)
+                                 long_window=10, short_window=5), axis=1)
 
 later_long_positions['yesterday_ret'] = later_long_positions.apply(
     lambda row: get_recent_return(data_no_backfill, row['Symbol'],
@@ -437,28 +450,28 @@ later_long_positions['yesterday_ret'] = later_long_positions.apply(
 
 later_long_positions['sp500_ewm_vol'] = later_long_positions.apply(
     lambda row: get_ewm_vol(spx, 'Adj Close',
-        data.loc[row['start date']]['Price Date'], 10), axis=1)
+                            data.loc[row['start date']]['Price Date'], 10), axis=1)
 
 later_long_positions['sp500_ewma'] = later_long_positions.apply(
     lambda row: get_ewm_momentum(spx, 'Adj Close',
-        data.loc[row['start date']]['Price Date'], long_window=10,
-        short_window=5), axis=1)
+                                 data.loc[row['start date']]['Price Date'], long_window=10,
+                                 short_window=5), axis=1)
 
 later_long_positions['sp500_yest_ret'] = later_long_positions.apply(
     lambda row: get_recent_return(spx, 'Adj Close',
-        data.loc[row['start date']]['Price Date'], days_back=1), axis=1)
+                                  data.loc[row['start date']]['Price Date'], days_back=1), axis=1)
 
 later_long_positions['actual_return'] = later_long_positions.apply(
     lambda row: get_actual_return(data, row['Symbol'], row['start date'],
-        str(row['trade year']) + '-' + row['end date']), axis=1)
+                                  str(row['trade year']) + '-' + row['end date']), axis=1)
 
 # Fit the model on all of X and y, i.e. data from 2019-2021, to predict for 2022
-model = RandomForestClassifier(random_state = np.random.seed(5555))
+model = RandomForestClassifier(random_state=np.random.seed(5555))
 model.fit(X, y)
 
 long_2022 = later_long_positions[later_long_positions['trade year'] == 2022]
-X_2022 = long_2022[['past3yr', 'past5yr','ewm_vol', 'long_momentum',
-                    'yesterday_ret','sp500_ewm_vol', 'sp500_ewma',
+X_2022 = long_2022[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
+                    'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
                     'sp500_yest_ret']].values
 y_2022 = np.where(long_2022['actual_return'] > 0.02, 1, 0)
 
@@ -492,22 +505,22 @@ print(classification_report(y_2022, np.repeat(1, len(y_2022)),
 # features and fit the model, which will be used to predict results in 2023
 
 long_positions_to_2023 = pd.concat([long_positions,
-    later_long_positions[later_long_positions['trade year'] == 2022]])
+                                    later_long_positions[later_long_positions['trade year'] == 2022]])
 long_positions_to_2023['outcome'] = np.where(
     long_positions_to_2023['actual_return'] > 0.03, 1, 0)
 
 X_to_2023 = long_positions_to_2023[['past3yr', 'past5yr', 'ewm_vol',
-'long_momentum', 'yesterday_ret','sp500_ewm_vol', 'sp500_ewma',
-'sp500_yest_ret']].values
+                                    'long_momentum', 'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
+                                    'sp500_yest_ret']].values
 y_to_2023 = long_positions_to_2023['outcome'].values
 
-model = RandomForestClassifier(random_state = np.random.seed(5555))
+model = RandomForestClassifier(random_state=np.random.seed(5555))
 model.fit(X_to_2023, y_to_2023)
 
 # Predict 2023 outcomes
-long_2023 = later_long_positions[later_long_positions['trade year']== 2023]
+long_2023 = later_long_positions[later_long_positions['trade year'] == 2023]
 X_2023 = long_2023[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
-                    'yesterday_ret', 'sp500_ewm_vol','sp500_ewma',
+                    'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
                     'sp500_yest_ret']].values
 y_2023 = np.where(long_2023['actual_return'] > 0.01, 1, 0)
 
@@ -570,10 +583,10 @@ print(classification_report(y_2023, np.repeat(1, len(y_2023)),
 
 long_2022_per_window_ret = long_2022.groupby(
     'trade window')['actual_return'].mean().values
-np.product(long_2022_per_window_ret+1) # 0.93% cumulative return
-long_2022_ml_per_window_ret = long_2022[rf_trade_2022==1].groupby(
+np.product(long_2022_per_window_ret + 1)  # 0.93% cumulative return
+long_2022_ml_per_window_ret = long_2022[rf_trade_2022 == 1].groupby(
     'trade window')['actual_return'].mean().values
-np.product(long_2022_ml_per_window_ret+1) # 3.75% return
+np.product(long_2022_ml_per_window_ret + 1)  # 3.75% return
 
 # By comparison, the SP500 suffered a 20% loss from 01-03-2022 to 12-30-2022
 # (4796.56 to 3839.50)
@@ -581,19 +594,20 @@ np.product(long_2022_ml_per_window_ret+1) # 3.75% return
 # Now for 2023:
 long_2023_per_window_ret = long_2023.groupby(
     'trade window')['actual_return'].mean().values
-np.product(long_2023_per_window_ret+1) # 45.9% cumulative return
-long_2023_ml_per_window_ret = long_2023[rf_trade_2023==1].groupby(
+np.product(long_2023_per_window_ret + 1)  # 45.9% cumulative return
+long_2023_ml_per_window_ret = long_2023[rf_trade_2023 == 1].groupby(
     'trade window')['actual_return'].mean().values
-np.product(long_2023_ml_per_window_ret+1) # 38.3% cumulative return
+np.product(long_2023_ml_per_window_ret + 1)  # 38.3% cumulative return
 
 # By comparison, the SP500 would have a 24.7% return from 01-03-2023 to 12-29-2023 (3824.14 to 4769.83)
 # If we account for a slippage/bid-ask spread of 1% per trade window,
 # compared to 0% for a buy-and-hold SP500 trade, in 2022 we would have the
 # following results:
-np.product(long_2022_per_window_ret+0.99) # 20.8% loss
-np.product(long_2022_ml_per_window_ret+0.99) # 18.5% loss
-np.product(long_2023_per_window_ret+0.99) # 15.1% profit
-np.product(long_2023_ml_per_window_ret+0.99) # 19.3% profit
+np.product(long_2022_per_window_ret + 0.99)  # 20.8% loss
+np.product(long_2022_ml_per_window_ret + 0.99)  # 18.5% loss
+np.product(long_2023_per_window_ret + 0.99)  # 15.1% profit
+np.product(long_2023_ml_per_window_ret + 0.99)  # 19.3% profit
+
 
 # The impact of these trading frictions is significant, since the trades occur
 # in up to 24 windows a year: while the seasonal trading strategy generally
@@ -629,9 +643,9 @@ def max_drawdown(arr):
 
 # Sample SP500 semi-monthly (using trade windows, backfilled as necessary)
 spx_bfill_vals_2022 = spx_bfill.loc[np.sort(long_2022['trade window'].unique())]
-spx_bfill_rets_2022 = np.log(spx_bfill_vals_2022['Adj Close']/spx_bfill_vals_2022['Adj Close'].shift(1))
+spx_bfill_rets_2022 = np.log(spx_bfill_vals_2022['Adj Close'] / spx_bfill_vals_2022['Adj Close'].shift(1))
 spx_bfill_vals_2023 = spx_bfill.loc[np.sort(long_2023['trade window'].unique())]
-spx_bfill_rets_2023 = np.log(spx_bfill_vals_2023['Adj Close']/spx_bfill_vals_2023['Adj Close'].shift(1))
+spx_bfill_rets_2023 = np.log(spx_bfill_vals_2023['Adj Close'] / spx_bfill_vals_2023['Adj Close'].shift(1))
 
 # Lastly, as a point of reference, the largest drawdowns for each strategy/year are given below
 print(max_drawdown(long_2022_per_window_ret))
