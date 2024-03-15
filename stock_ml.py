@@ -49,7 +49,7 @@ def seasonal_return(data, symbol, start_date, end_date, first_year, last_year):
                           end_price, returns])
 
     df = pd.DataFrame(data_list, columns=['Symbol', 'Year', 'Init Date',
-                                          'Init Price', 'Final Date', 'Final Price', 'Return'])
+        'Init Price', 'Final Date', 'Final Price', 'Return'])
     return df
 
 
@@ -68,7 +68,8 @@ def return_stats(x, risk_free_rate=0):
 
 
 # Historical rate of stock going up (i.e. winrate if we are long)
-def historical_up_rate(data, symbol, start_date, end_date, first_year, last_year):
+def historical_up_rate(data, symbol, start_date, end_date, first_year,
+    last_year):
     up_list = []
     # Deal with Feb 29: assign start/end dates to Mar 1
     if start_date == '02-29': start_date = '03-01'
@@ -188,13 +189,16 @@ all_returns['trade year'] = all_returns['trade window'].str.slice(0, 4)
 
 # Part 2: Get feature data at the time of trade
 
-# This time, our criteria is an annualized return > 40%, 6/10+ winrate in the
-# last 10 years, and total return of at least 1%. From here, sort by highest
-# Sharpe ratio using historical seasonal trades, and select the top 10 for each
-# trade window
+# This time, our criteria is annualized returns of at least 40%, a 6/10+ winrate
+# in the last 10 years, and total return of at least 2%. The choice of 2% is to
+# select for technical trades that have a fairly "obvious" seasonal signal
+# relative to the typical day-to-day volatility in stock prices (usually ~1%).
+# From here, sort by highest Sharpe ratio using historical seasonal trades,
+# and select the top 10 for each trade window
 
 long_positions = all_returns[(all_returns['annualized r'] > 0.4) &
-                             (all_returns.up >= 6) & (all_returns['avg r'] > .01)].sort_values(
+                             (all_returns.up >= 6) &
+                             (all_returns['avg r'] > .02)].sort_values(
     'Sharpe Long', ascending=False).groupby('trade window').head(10)
 
 # Define the feature functions
@@ -215,7 +219,6 @@ long_positions['past5yr'] = long_positions.apply(lambda row: historical_up_rate(
 
 data_no_backfill = data[data.index == data['Price Date']]
 
-
 # Note that these functions are shifted by 1 day backwards, to avoid knowing the
 # current day's closing price when making a trade decision during the day
 
@@ -223,11 +226,9 @@ def get_ewm_vol(data, symbol, date, span=10):
     stock_rets = np.log(data[symbol] / data[symbol].shift(1)).shift(1)
     return stock_rets.ewm(span).std().loc[date]
 
-
 long_positions['ewm_vol'] = long_positions.apply(lambda row: get_ewm_vol(
     data_no_backfill, row['Symbol'], data.loc[row['start date']]['Price Date'],
     30), axis=1)
-
 
 # EWMA of price: compare between a long/short window to determine
 # whether the signal is long
@@ -256,11 +257,8 @@ long_positions['yesterday_ret'] = long_positions.apply(
                                   days_back=1), axis=1)
 
 # Get SP500 EWMA and yesterday returns, making sure not to backfill
-
-# Import SP500 data
 spx = pd.DataFrame(yf.download('^SPX', start_date, end_date)['Adj Close'])
 all_dates = pd.date_range(start_date, end_date)
-spx_bfill = spx.reindex(all_dates, method='bfill')
 
 long_positions['sp500_ewm_vol'] = long_positions.apply(
     lambda row: get_ewm_vol(spx, 'Adj Close',
@@ -289,17 +287,12 @@ long_positions['actual_return'] = long_positions.apply(
 
 # Part 3: Apply the random forest
 
-# Assign 1 or 0 for whether or not we should have traded:
-# this is the outcome variable we will train the features to predict
-
-# To help our classification: consider a successful trade if the actual return
-# is at least 2%. Many stocks have daily volatilities exceeding 1%, so it would
-# not make sense to overlay an ML model on what is largely daily noise. Note
-# that if we took ALL 720 trades from the seasonal strategy
-# (3 years x 12 months x 2 trade windows x 10 trades/window), we would still
-# turn an average profit, with average return of 0.74% per trade, which roughly
-# annualizes to 17.7%. 280/720 seasonal trades would have had returns in excess
-# of 2%, for roughly 39% of the trades.
+# Classify the actual returns into 1 or 0: a 1 if the actual return exceeds 2%,
+# 0 otherwise. The choice of 2% is so that it is clear it is a winning trade.
+# Given that many stocks have daily volatilities of around 1%, a smaller actual
+# return (e.g. just 1%) would be us overlaying an ML model on what is largely
+# noise. After defining our classifier, fit a random forest model on our
+# training data set.
 
 long_positions['outcome'] = np.where(
     long_positions['actual_return'] > 0.02, 1, 0)
@@ -310,19 +303,19 @@ X = long_positions[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
                     'sp500_yest_ret']].values
 y = long_positions['outcome'].values
 
-# Split data into training/testing sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, train_size=0.75, shuffle=False, random_state=np.random.seed(5555))
-
-model = RandomForestClassifier(random_state=np.random.seed(5555))
-
-model.fit(X_train, y_train)
-
 # Generate a ROC curve as well as some classification reports
 # The ROC curve is generally above y=x (which we would hope would be the case!)
 # suggesting that our overlaid ML model has some power when it comes to
 # distinguishing between profitable and not profitable long trades of the ones
 # suggested by the simple seasonal strategy
+
+# Split data into training/testing sets
+X_train, X_test, y_train, y_test, indices_train, indices_test = train_test_split(
+    X, y, range(len(y)), train_size=0.75, random_state = np.random.seed(1234))
+
+model = RandomForestClassifier(random_state = np.random.seed(1234))
+
+model.fit(X_train,y_train)
 
 y_pred_rf = model.predict_proba(X_test)[:, 1]
 y_pred = model.predict(X_test)
@@ -339,32 +332,94 @@ plt.show()
 
 print(classification_report(y_test, y_pred,
                             target_names=['no_trade', 'trade']))
-# y_test.mean()
+print('Average winrate in all seasonal trades %5.2f' %
+     long_positions.iloc[indices_test]['outcome'].mean())
+print('Average return in all seasonal trades: %5.3f' %
+    long_positions.iloc[indices_test]['actual_return'].mean())
+print('Average return in random forest trades: %5.3f' %
+    long_positions.iloc[indices_test][y_pred==1]['actual_return'].mean())
 
+#The random forest improves precision for trades (the ratio of true positives
+# divided by classified positives) from 0.44 when we would have taken every
+# seasonal trade recommendation, to 0.70 when we use the classifier.
 
-# Looking at the differences in the two classification reports, we see that
-# the ML model improves precision (true positives/classified positives)
-# from 0.50 when we accept all proposed long trades, to 0.55 when we overlay the
-# classifier.
+# Precision is the metric we care the most about, since we "lose nothing" by not
+# participating in a trade, and can always scale up the sizes of our trades to
+# account for the fewer total number of trades we make. If we found ourselves
+# with not enough trades, we could increase the "recall" of the initial seasonal
+# strategy by considering more than just the top 10 trades by Sharpe ratio, and
+# then applying the random forest. With the random forest, the average returns
+# per trade are much higher, increasing from 1.0% if we traded every seasonal
+# strategy, to 3.9% if we used the classifier.
 
-# Precision is the metric we care the most about, since we "lose nothing" by
-# not participating in a trade, and can always scale up the sizes of our trades
-# to account for the fewer total number of trades we make. There are ~10 trades
-# proposed every 2 weeks, which means there is generally no shortage of trade
-# opportunities.
+# However, there's a potential issue with the above methodology and report: the
+# current way of splitting the data into training and testing sets could have
+# data from the same trade window in both the training and testing sets. If two
+# trades were to start at the same time, for example, the S&P500 features would
+# exactly align, and if we think there is serial correlation in stock prices
+# (e.g. general market movements), there will be leakage. We can try to "purge"
+# much of this serial correlation by making sure the test and training datasets
+# never include the same trade windows. For simplicity, I manually split the
+# data as such. Here, I set the test sets to be Jan 1 to Apr 15 in 2019, May 1
+# to Aug 15 in 2020, and Sep 1 to Dec 15 in 2021 for trading windows, and the
+# training sets to be everything else (I don't establish a gap or "embargo"
+# between the trade dates, although some of the EWMA indicators might have some
+# leakage across adjacent periods).
 
-# But wait, this seems a bit too easy. It is likely that stock movements are
-# serially correlated, driven by concurrent broad market movements: we may
-# have split the training and testing sets such that there are data from the same
-# time period (trading window) in both sets, just for different (correlated)
-# stocks. We can try to address this problem by manually dividing the testing
-# and training sets: For simplicity, set the test sets to be Jan 1 to Apr 15
-# in 2019, May 1 to Aug 15 in 2020, and Sep 1 to Dec 15 in 2021 for trading
-# windows, and the training sets to be everything else (I don't establish a gap
-# or "embargo" between the trade dates, although some of the EWMA indicators
-# might have some spillage across adjacent periods).
+long_positions['trade window date'] = pd.to_datetime(long_positions['trade window'])
 
-X_train
+# Define the test data's endpoints
+a1 = pd.to_datetime('2019-01-01')
+a2 = pd.to_datetime('2019-04-15')
+b1 = pd.to_datetime('2020-05-01')
+b2 = pd.to_datetime('2020-08-15')
+c1 = pd.to_datetime('2021-09-01')
+c2 = pd.to_datetime('2021-12-15')
+
+test_flag = (
+    ((long_positions['trade window date'] >= a1) & (long_positions['trade window date'] <= a2)) |
+    ((long_positions['trade window date'] >= b1) & (long_positions['trade window date'] <= b2)) |
+    ((long_positions['trade window date'] >= c1) & (long_positions['trade window date'] <= c2)))
+
+train_flag = ~test_flag
+train_set = long_positions[train_flag]
+test_set = long_positions[test_flag]
+
+X_train = train_set[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
+                    'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
+                    'sp500_yest_ret']].values
+y_train = train_set['outcome'].values
+
+X_test = test_set[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
+                    'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
+                    'sp500_yest_ret']].values
+y_test = test_set['outcome'].values
+
+model = RandomForestClassifier(random_state = np.random.seed(1234))
+
+model.fit(X_train,y_train)
+
+y_pred_rf = model.predict_proba(X_test)[:, 1]
+y_pred = model.predict(X_test)
+fpr_rf, tpr_rf, _ = roc_curve(y_test, y_pred_rf)
+
+plt.figure(1)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr_rf, tpr_rf, label='RF')
+plt.xlabel('False positive rate')
+plt.ylabel('True positive rate')
+plt.title('ROC curve')
+plt.legend(loc='best')
+plt.show()
+
+print(classification_report(y_test, y_pred,
+                            target_names=['no_trade', 'trade']))
+print('Average winrate in all seasonal trades %5.2f' %
+     test_set['outcome'].mean())
+print('Average return in all seasonal trades: %5.3f' %
+      test_set['actual_return'].mean())
+print('Average return in random forest trades: %5.3f' %
+      test_set[y_pred==1]['actual_return'].mean())
 
 # Part 4: Applying the model out of sample
 
@@ -423,8 +478,9 @@ later_returns['trade year'] = later_returns['trade window'].str.slice(0, 4)
 # Read in seasonal long trades identified for 2022/2023 from CSV
 later_returns = pd.read_csv('seasonal_trades_2022_2023.csv')
 
-later_long_positions = later_returns[(later_returns['annualized r'] > 0.5) &
-                                     (later_returns.up >= 6) & later_returns['avg r'] > .01].sort_values(
+later_long_positions = later_returns[(later_returns['annualized r'] > 0.4) &
+                                     (later_returns.up >= 6) &
+                                     later_returns['avg r'] > .02].sort_values(
     'Sharpe Long', ascending=False).groupby('trade window').head(10)
 
 # Calculate the feature values
@@ -465,15 +521,18 @@ later_long_positions['actual_return'] = later_long_positions.apply(
     lambda row: get_actual_return(data, row['Symbol'], row['start date'],
                                   str(row['trade year']) + '-' + row['end date']), axis=1)
 
+later_long_positions['outcome'] = np.where(
+    later_long_positions['actual_return'] > 0.02, 1, 0)
+
 # Fit the model on all of X and y, i.e. data from 2019-2021, to predict for 2022
-model = RandomForestClassifier(random_state=np.random.seed(5555))
+model = RandomForestClassifier(random_state=np.random.seed(1234))
 model.fit(X, y)
 
 long_2022 = later_long_positions[later_long_positions['trade year'] == 2022]
 X_2022 = long_2022[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
                     'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
                     'sp500_yest_ret']].values
-y_2022 = np.where(long_2022['actual_return'] > 0.02, 1, 0)
+y_2022 = long_2022['outcome'].values
 
 rf_trade_2022_prob = model.predict_proba(X_2022)[:, 1]
 rf_trade_2022 = model.predict(X_2022)
@@ -491,38 +550,52 @@ plt.show()
 print(classification_report(y_2022, rf_trade_2022,
                             target_names=['no_trade', 'trade']))
 
-print(classification_report(y_2022, np.repeat(1, len(y_2022)),
-                            target_names=['no_trade_no_ML', 'trade_no_ML']))
+print('Average winrate in all seasonal trades %5.2f' %
+      long_2022['outcome'].mean())
+print('Average return in all seasonal trades: %5.3f' %
+      long_2022['actual_return'].mean())
+print('Std Dev of returns in all seasonal trades: %5.3f' %
+      long_2022['actual_return'].std())
+print('Average return in random forest trades: %5.3f' %
+      long_2022[rf_trade_2022==1]['actual_return'].mean())
+print('Std Dev of returns in random forest trades: %5.3f' %
+      long_2022[rf_trade_2022==1]['actual_return'].std())
 
-# As before, this model results in an improvement in the precision of trades,
-# from 32% to 37%, and statistically insignificant increase in average returns
-# (0.22% to 0.94%, with a std dev of returns on trades of around 7-8%)
+# This model results in a decrease in overall precision of trades relative to
+# taking all trades, and a slight decrease in average returns (still
+# significantly smaller than the volatility in returns, 7+%). Both of these
+# effects are very minor and likely within the expected effects from noise.
 
-# long_2022['actual_return'].mean()
-# long_2022[rf_trade_2022==1]['actual_return'].mean()
+# Overall, this is not a good performance for the long seasonal trading strategy
+# or the random forest. However, if we consider that the S&P500 dropped around
+# 20% in 2022, perhaps a 0% return isn't so bad.
+
+# But let's consider this model's performance in 2023, a bull year. To construct
+# the training data, add the data from 2019-2021 to that from 2022 to generate
+# the set of training data ("to 2023") which will be used to classify potential
+# 2023 seasonal trades.
+
 
 # For 2023, add the data from 2019-2021 to that from 2022 to generate the
 # features and fit the model, which will be used to predict results in 2023
 
 long_positions_to_2023 = pd.concat([long_positions,
-                                    later_long_positions[later_long_positions['trade year'] == 2022]])
-long_positions_to_2023['outcome'] = np.where(
-    long_positions_to_2023['actual_return'] > 0.03, 1, 0)
+    later_long_positions[later_long_positions['trade year'] == 2022]])
 
 X_to_2023 = long_positions_to_2023[['past3yr', 'past5yr', 'ewm_vol',
-                                    'long_momentum', 'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
-                                    'sp500_yest_ret']].values
+'long_momentum', 'yesterday_ret','sp500_ewm_vol', 'sp500_ewma',
+'sp500_yest_ret']].values
 y_to_2023 = long_positions_to_2023['outcome'].values
 
-model = RandomForestClassifier(random_state=np.random.seed(5555))
+model = RandomForestClassifier(random_state = np.random.seed(1234))
 model.fit(X_to_2023, y_to_2023)
 
 # Predict 2023 outcomes
-long_2023 = later_long_positions[later_long_positions['trade year'] == 2023]
+long_2023 = later_long_positions[later_long_positions['trade year']== 2023]
 X_2023 = long_2023[['past3yr', 'past5yr', 'ewm_vol', 'long_momentum',
-                    'yesterday_ret', 'sp500_ewm_vol', 'sp500_ewma',
+                    'yesterday_ret', 'sp500_ewm_vol','sp500_ewma',
                     'sp500_yest_ret']].values
-y_2023 = np.where(long_2023['actual_return'] > 0.01, 1, 0)
+y_2023 = long_2023['outcome'].values
 
 rf_trade_2023_prob = model.predict_proba(X_2023)[:, 1]
 rf_trade_2023 = model.predict(X_2023)
@@ -539,19 +612,19 @@ plt.show()
 
 print(classification_report(y_2023, rf_trade_2023,
                             target_names=['no_trade', 'trade']))
+print('Average winrate in all seasonal trades %5.2f' %
+      long_2023['outcome'].mean())
+print('Average return in all seasonal trades: %5.3f' %
+      long_2023['actual_return'].mean())
+print('Std Dev of returns in all seasonal trades: %5.3f' %
+      long_2023['actual_return'].std())
+print('Average return in random forest trades: %5.3f' %
+      long_2023[rf_trade_2023==1]['actual_return'].mean())
+print('Std Dev of returns in random forest trades: %5.3f' %
+      long_2023[rf_trade_2023==1]['actual_return'].std())
 
-print(classification_report(y_2023, np.repeat(1, len(y_2023)),
-                            target_names=['no_trade_no_ML', 'trade_no_ML']))
 
-# long_2023['actual_return'].mean()
-# long_2023[rf_trade_2023==1]['actual_return'].count()
-
-
-# Part 5: Performance metrics for long
-
-# The random forest improves precision from 52% to 56%. More importantly,
-# the average returns on trades improves from 1.6% per trade to 2.4%, although
-# it is not statistically significant.
+# Part 5: Performance metrics for 2022/2023
 
 # The main difference is that we take 135/39 trades a year (in 2022/2023)
 # compared to 240, with each trade having higher average profitability. It makes
@@ -566,47 +639,111 @@ print(classification_report(y_2023, np.repeat(1, len(y_2023)),
 # 2) I assume we know "ahead of time" the number of trades we will make each
 #    trade window, and divide the trade such that we end up using all of the
 #    money per trade period
+
 # The first assumption seems fairly innocuous since the assets are held for short
-# periods and typically have movements in the single percents, i.e. the
-# the amount of money risked due to drawdowns is minimal. One way to 
-# held for less than the time between trades.
+# periods and typically have movements in the single percents, i.e. the  amount
+# of money risked due to drawdowns is minimal.
+
 # The second assumption is a bit trickier, since trades per window range from
-# 1 to 10 in 2022, and 0 to 5 in 2023, but I want to abstract away from the
-# bet sizing decision in this illustrative example. In reality I would have to
-# predict the number of trades we would take each trade window in order to size
-# the bets such that the portfolio is fully utilized.
+# 1 to 10 in 2022, and 0 to 5 in 2023 . In reality I would have to predict the
+# number of trades I would take each trade window in order to size the bets such
+# that the money in the portfolio is employed as much as possible.
 
 # How much would taking all the long positions have made (10 trades per window)?
-# To avoid the breakdown of logarithms as approximations to returns, calculate
-# the per trade window new cash amount by averaging the 10 returns for that window
-# Then take the cumulative product of all of these
+# Calculate the per-trade-window return by averaging the returns for all trades
+# taken in that window. Then take the cumulative product over all trade windows.
 
-long_2022_per_window_ret = long_2022.groupby(
-    'trade window')['actual_return'].mean().values
-np.product(long_2022_per_window_ret + 1)  # 0.93% cumulative return
-long_2022_ml_per_window_ret = long_2022[rf_trade_2022 == 1].groupby(
-    'trade window')['actual_return'].mean().values
-np.product(long_2022_ml_per_window_ret + 1)  # 3.75% return
-
+# Calculate strategy returns
 # By comparison, the SP500 suffered a 20% loss from 01-03-2022 to 12-30-2022
 # (4796.56 to 3839.50)
+long_2022_per_window_ret = long_2022.groupby(
+    'trade window')['actual_return'].mean()
+np.product(long_2022_per_window_ret + 1) # 2.7% cum. return for seasonal trade
+long_2022_ml_per_window_ret = long_2022[rf_trade_2022 == 1].groupby(
+    'trade window')['actual_return'].mean()
+np.product(long_2022_ml_per_window_ret + 1) # 18.8% cum. return for random forest
+
+# Plot portfolio performance, but now assume a 1% penalty in all stock trades
+# due to trade frictions
+long_2022_graph = long_2022.groupby(
+    'trade window')['actual_return'].mean().reset_index()
+l22 = long_2022_graph.merge(long_2022[rf_trade_2022 == 1].groupby(
+    'trade window')['actual_return'].mean().rename('actual_return_ml').reset_index(),
+                     on='trade window',how='left')
+
+l22['return_value'] = 0.99 + l22['actual_return']
+l22['cum_value'] = l22['return_value'].cumprod()
+l22['return_value_ml'] = np.where(np.isnan(l22['actual_return_ml']), 1,
+                                  0.99 + l22['actual_return_ml'])
+l22['cum_value_ml'] = l22['return_value_ml'].cumprod()
+
+spx_2022_start_price = spx.loc['2022-01-03']['Adj Close']
+spx_2022 = spx.loc['2022-01-03':'2022-12-30']
+fig, ax = plt.subplots()
+l22['date']= pd.to_datetime(l22['trade window'])
+date_lag = timedelta(days=14) # offset the X axis by 2 weeks 
+
+ax.plot(l22['date']+date_lag, l22['cum_value'],
+            label='Seasonal Portfolio Value', linewidth=3.0, linestyle='dashed')
+ax.plot(l22['date']+date_lag, l22['cum_value_ml'],
+             label='RF Portfolio Value', linewidth=3.0, linestyle='dashed')
+ax.plot(spx_2022.index, spx_2022['Adj Close']/spx_2022_start_price,
+             label='S&P 500 Value', linewidth=3.0, linestyle='dashed')
+ax.axhline(y=1, color='blue')
+
+plt.title("2022 Portfolio Performance")
+ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
+plt.ylabel("Portfolio Value Rel. to Year Start")
+plt.xlabel('Month')
+plt.show()
 
 # Now for 2023:
+long_2023_per_window_ret = long_2023.groupby(
+    'trade window')['actual_return'].mean().values
+np.product(long_2023_per_window_ret + 1) # 42.7% cum return for seasonal
+long_2023_ml_per_window_ret = long_2023[rf_trade_2023 == 1].groupby(
+    'trade window')['actual_return'].mean().values
+np.product(long_2023_ml_per_window_ret + 1)  # 98.1% cum return for random forest
+
+# Plot portfolio performance with 1% penalty in all stock trades
+long_2023_graph = long_2023.groupby(
+    'trade window')['actual_return'].mean().reset_index()
+l23 = long_2023_graph.merge(long_2023[rf_trade_2023 == 1].groupby(
+    'trade window')['actual_return'].mean().rename('actual_return_ml').reset_index(),
+                     on='trade window',how='left')
+
+l23['return_value'] = 0.99 + l23['actual_return']
+l23['cum_value'] = l23['return_value'].cumprod()
+l23['return_value_ml'] = np.where(np.isnan(l23['actual_return_ml']), 1,
+                                  0.99 + l23['actual_return_ml'])
+l23['cum_value_ml'] = l23['return_value_ml'].cumprod()
+
+spx_2023_start_price = spx.loc['2023-01-03']['Adj Close']
+spx_2023 = spx.loc['2023-01-03':'2023-12-30']
+fig, ax = plt.subplots()
+l23['date']= pd.to_datetime(l23['trade window'])
+date_lag = timedelta(days=14) # offset the X axis by 2 weeks 
+
+ax.plot(l23['date']+date_lag, l23['cum_value'],
+            label='Seasonal Portfolio Value', linewidth=3.0, linestyle='dashed')
+ax.plot(l23['date']+date_lag, l23['cum_value_ml'],
+             label='RF Portfolio Value', linewidth=3.0, linestyle='dashed')
+ax.plot(spx_2023.index, spx_2023['Adj Close']/spx_2023_start_price,
+             label='S&P 500 Value', linewidth=3.0, linestyle='dashed')
+ax.axhline(y=1, color='blue')
+
+plt.title("2023 Portfolio Performance")
+ax.legend(bbox_to_anchor=(1, 1), loc='upper left')
+plt.ylabel("Portfolio Value Rel. to Year Start")
+plt.xlabel('Month')
+plt.show()
+
 long_2023_per_window_ret = long_2023.groupby(
     'trade window')['actual_return'].mean().values
 np.product(long_2023_per_window_ret + 1)  # 45.9% cumulative return
 long_2023_ml_per_window_ret = long_2023[rf_trade_2023 == 1].groupby(
     'trade window')['actual_return'].mean().values
 np.product(long_2023_ml_per_window_ret + 1)  # 38.3% cumulative return
-
-# By comparison, the SP500 would have a 24.7% return from 01-03-2023 to 12-29-2023 (3824.14 to 4769.83)
-# If we account for a slippage/bid-ask spread of 1% per trade window,
-# compared to 0% for a buy-and-hold SP500 trade, in 2022 we would have the
-# following results:
-np.product(long_2022_per_window_ret + 0.99)  # 20.8% loss
-np.product(long_2022_ml_per_window_ret + 0.99)  # 18.5% loss
-np.product(long_2023_per_window_ret + 0.99)  # 15.1% profit
-np.product(long_2023_ml_per_window_ret + 0.99)  # 19.3% profit
 
 
 # The impact of these trading frictions is significant, since the trades occur
@@ -628,6 +765,8 @@ np.product(long_2023_ml_per_window_ret + 0.99)  # 19.3% profit
 
 
 # Get max drawdown as function of array of returns (in order)
+# A fun leetcode problem...
+
 def max_drawdown(arr):
     drawdown = 0
     max_drawdown = 0
@@ -640,24 +779,18 @@ def max_drawdown(arr):
                 max_drawdown = drawdown
     return max_drawdown
 
-
 # Sample SP500 semi-monthly (using trade windows, backfilled as necessary)
+spx_bfill = spx.reindex(all_dates, method='bfill')
+
 spx_bfill_vals_2022 = spx_bfill.loc[np.sort(long_2022['trade window'].unique())]
 spx_bfill_rets_2022 = np.log(spx_bfill_vals_2022['Adj Close'] / spx_bfill_vals_2022['Adj Close'].shift(1))
 spx_bfill_vals_2023 = spx_bfill.loc[np.sort(long_2023['trade window'].unique())]
 spx_bfill_rets_2023 = np.log(spx_bfill_vals_2023['Adj Close'] / spx_bfill_vals_2023['Adj Close'].shift(1))
 
 # Lastly, as a point of reference, the largest drawdowns for each strategy/year are given below
-print(max_drawdown(long_2022_per_window_ret))
-print(max_drawdown(long_2023_per_window_ret))
-print(max_drawdown(long_2022_ml_per_window_ret))
-print(max_drawdown(long_2023_ml_per_window_ret))
-print(max_drawdown(spx_bfill_rets_2022))
-print(max_drawdown(spx_bfill_rets_2023))
-
-#      Long all  Long ML  SP500
-# 2022 15.9%     17.8%    15.6%
-# 2023 6.4%      13.0%    6.4%
-
-
-# Part 6: A quick repeat but for shorts
+print('Largest drawdown in 2022 for seasonal: %5.3f' % -max_drawdown(long_2022_per_window_ret))
+print('Largest drawdown in 2022 for RF: %5.3f' % -max_drawdown(long_2022_ml_per_window_ret))
+print('Largest drawdown in 2022 for S&P 500: %5.3f' % -max_drawdown(spx_bfill_rets_2022))
+print('Largest drawdown in 2023 for seasonal: %5.3f' % -max_drawdown(long_2023_per_window_ret))
+print('Largest drawdown in 2023 for RF: %5.3f' % -max_drawdown(long_2023_ml_per_window_ret))
+print('Largest drawdown in 2023 for S&P 500: %5.3f' % -max_drawdown(spx_bfill_rets_2023))
