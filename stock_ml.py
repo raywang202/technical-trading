@@ -274,9 +274,7 @@ long_positions['sp500_yest_ret'] = long_positions.apply(
                                   data.loc[row['start date']]['Price Date'],
                                   days_back=1), axis=1)
 
-
 # Get the actual returns for the start/end date
-
 def get_actual_return(data, symbol, start_date, end_date):
     return np.log(data[symbol].loc[end_date] / data[symbol].loc[start_date])
 
@@ -339,7 +337,7 @@ print('Average return in all seasonal trades: %5.3f' %
 print('Average return in random forest trades: %5.3f' %
     long_positions.iloc[indices_test][y_pred==1]['actual_return'].mean())
 
-#The random forest improves precision for trades (the ratio of true positives
+# The random forest improves precision for trades (the ratio of true positives
 # divided by classified positives) from 0.44 when we would have taken every
 # seasonal trade recommendation, to 0.70 when we use the classifier.
 
