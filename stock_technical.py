@@ -1,7 +1,6 @@
 import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 import numpy as np
 from itertools import product
@@ -23,10 +22,10 @@ from itertools import product
 # ssl._create_default_https_context = ssl._create_unverified_context
 # table=pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
 # df = table[0]
-# df.to_csv("S&P500-Symbols.csv", columns=['Symbol'], index=False)
+# df.to_csv("files/S&P500-Symbols.csv", columns=['Symbol'], index=False)
 
 # Pull the adjusted close prices off Yahoo Finance
-df = pd.read_csv("S&P500-Symbols.csv")
+df = pd.read_csv("files/S&P500-Symbols.csv")
 tickers = list(df['Symbol'])
 start_date = '1989-01-01'
 end_date = '2024-01-03'  # Get data a few days past end of year to backfill
@@ -34,7 +33,7 @@ end_date = '2024-01-03'  # Get data a few days past end of year to backfill
 # Either pull from Yahoo finance, or for read the pre-downloaded CSV
 # data = pd.DataFrame(yf.download(tickers, start_date, end_date)['Adj Close'])
 # data.reset_index().to_csv("S&P500-adjusted-close.csv", index=False)
-data = pd.read_csv('S&P500-adjusted-close.csv')
+data = pd.read_csv('files/S&P500-adjusted-close.csv')
 data['Date'] = pd.to_datetime(data['Date'])
 data = data.set_index('Date')
 all_dates = pd.date_range(start_date, end_date)
@@ -42,7 +41,7 @@ data['Price Date'] = data.index
 
 # Backfill with trading prices for missing dates
 data = data.reindex(all_dates, method='bfill')
-sp500_dates_added = pd.read_csv("S&P500-Info.csv")[['Symbol', 'Date added']]
+sp500_dates_added = pd.read_csv("files/S&P500-Info.csv")[['Symbol', 'Date added']]
 
 all_stocks = data.columns.drop(labels='Price Date')
 
@@ -205,19 +204,19 @@ all_returns = pd.concat(all_returns_list)
 all_returns['annualized r'] = (all_returns['avg r'] * 365 /
                                all_returns['hold length'])
 
-# all_returns.to_csv('seasonal_trades.csv')
+# all_returns.to_csv('files/seasonal_trades.csv')
 
 # Part 4
 
 # Read in the CSV: running the code takes about 20 minutes
-all_returns = pd.read_csv('seasonal_trades.csv')
+all_returns = pd.read_csv('files/seasonal_trades.csv')
 # Identify which long/short positions we would take
 # Take the top 5 long/short for each trade window
 long_positions = all_returns[(all_returns['annualized r'] > 0.4) &
- (all_returns.up >= 6)].sort_values(
+                             (all_returns.up >= 6)].sort_values(
     'Sharpe Long', ascending=False).groupby('trade window').head(5)
 short_positions = all_returns[(all_returns['annualized r'] < 0.4) &
- (all_returns.up <= 4)].sort_values(
+                              (all_returns.up <= 4)].sort_values(
     'Sharpe Short', ascending=False).groupby('trade window').head(5)
 
 # Note that within the same trade window, we may end up trading the same stock
@@ -226,43 +225,45 @@ short_positions = all_returns[(all_returns['annualized r'] < 0.4) &
 # in one direction, and we would probably avoid doubling down in reality. But for
 # now, let's just look at the results of our trades in 2023
 
-long_trades = long_positions.loc[:,['Symbol','start date','end date']]
-long_trades['buy date']=long_trades['start date']
-long_trades['sell date']="2023-"+long_trades['end date']
+long_trades = long_positions.loc[:, ['Symbol', 'start date', 'end date']]
+long_trades['buy date'] = long_trades['start date']
+long_trades['sell date'] = "2023-" + long_trades['end date']
+
 
 # Results of long trades (invert order of buy/sell dates if shorting)
 def long_trade_result(data, symbol, buy_date, sell_date):
-    [buy_price, actual_buy_date] = data.loc[buy_date][[symbol,'Price Date']]
-    [sell_price, actual_sell_date] = data.loc[sell_date][[symbol,'Price Date']]
-    trade_return =  (sell_price/buy_price)-1
-    return pd.Series({'Symbol':symbol,'Buy Signal Date':buy_date,
-        'Actual Buy Date':actual_buy_date,'Buy Price':buy_price,
-        'Sell Signal Date':sell_date,'Actual Sell Date':actual_sell_date,
-        'Actual Sell Price':sell_price,'Return':trade_return},
-        index = ['Symbol','Buy Signal Date','Actual Buy Date','Buy Price',
-        'Sell Signal Date','Actual Sell Date','Actual Sell Price','Return'])
+    [buy_price, actual_buy_date] = data.loc[buy_date][[symbol, 'Price Date']]
+    [sell_price, actual_sell_date] = data.loc[sell_date][[symbol, 'Price Date']]
+    trade_return = (sell_price / buy_price) - 1
+    return pd.Series({'Symbol': symbol, 'Buy Signal Date': buy_date,
+                      'Actual Buy Date': actual_buy_date, 'Buy Price': buy_price,
+                      'Sell Signal Date': sell_date, 'Actual Sell Date': actual_sell_date,
+                      'Actual Sell Price': sell_price, 'Return': trade_return},
+                     index=['Symbol', 'Buy Signal Date', 'Actual Buy Date', 'Buy Price',
+                            'Sell Signal Date', 'Actual Sell Date', 'Actual Sell Price', 'Return'])
+
 
 long_trade_results_list = []
 
 for row in range(long_trades.shape[0]):
     long_trade_results_list.append(
         long_trade_result(data, long_trades.iloc[row].Symbol,
-            long_trades.iloc[row]['buy date'],
-            long_trades.iloc[row]['sell date']))
+                          long_trades.iloc[row]['buy date'],
+                          long_trades.iloc[row]['sell date']))
 
 long_trade_results = pd.DataFrame(long_trade_results_list)
 
-short_trades = short_positions.loc[:,['Symbol','start date','end date']]
-short_trades['buy date']="2023-"+short_trades['end date']
-short_trades['sell date']=short_trades['start date']
+short_trades = short_positions.loc[:, ['Symbol', 'start date', 'end date']]
+short_trades['buy date'] = "2023-" + short_trades['end date']
+short_trades['sell date'] = short_trades['start date']
 
 short_trade_results_list = []
 
 for row in range(short_trades.shape[0]):
     short_trade_results_list.append(
         long_trade_result(data, short_trades.iloc[row].Symbol,
-            short_trades.iloc[row]['buy date'],
-            short_trades.iloc[row]['sell date']))
+                          short_trades.iloc[row]['buy date'],
+                          short_trades.iloc[row]['sell date']))
 
 short_trade_results = pd.DataFrame(short_trade_results_list)
 
@@ -270,25 +271,25 @@ short_trade_results = pd.DataFrame(short_trade_results_list)
 
 # Long position results
 print("Average long return: %5.4f" % long_trade_results['Return'].mean())
-print("Sharpe ratio (long): %5.4f" % 
-      (long_trade_results['Return'].mean()/long_trade_results['Return'].std()))
-print("Sortino ratio (long): %5.4f" % 
-      (long_trade_results['Return'].mean()/
-       long_trade_results[long_trade_results['Return']<0]['Return'].std()))
+print("Sharpe ratio (long): %5.4f" %
+      (long_trade_results['Return'].mean() / long_trade_results['Return'].std()))
+print("Sortino ratio (long): %5.4f" %
+      (long_trade_results['Return'].mean() /
+       long_trade_results[long_trade_results['Return'] < 0]['Return'].std()))
 # Short position results
 print("Average short return: %5.4f" % short_trade_results['Return'].mean())
-print("Sharpe ratio (short): %5.4f" % 
-      (short_trade_results['Return'].mean()/short_trade_results['Return'].std()))
+print("Sharpe ratio (short): %5.4f" %
+      (short_trade_results['Return'].mean() / short_trade_results['Return'].std()))
 print("Sortino ratio (short): %5.4f" %
-     (short_trade_results['Return'].mean()/
-      short_trade_results[long_trade_results['Return']<0]['Return'].std()))
+      (short_trade_results['Return'].mean() /
+       short_trade_results[long_trade_results['Return'] < 0]['Return'].std()))
 
 # Compare to what we may have expected if 2023 played out according to historicals:
 print('Historical long return: %5.4f' % long_positions['avg r'].mean())
 print('Historical 1%%ile long Sharpe ratio: %5.4f' %
- long_positions['Sharpe Long'].quantile(q=0.01))
-print('Historical 1%%ile long Sortino ratio: %5.4f'%
- long_positions['Sortino Long'].quantile(q=0.01))
+      long_positions['Sharpe Long'].quantile(q=0.01))
+print('Historical 1%%ile long Sortino ratio: %5.4f' %
+      long_positions['Sortino Long'].quantile(q=0.01))
 
 print('Historical short return: %5.4f' % -short_positions['avg r'].mean())
 print('Historical 1%%ile short Sharpe ratio: %5.4f' %
@@ -300,25 +301,24 @@ print('Historical 1%%ile short Sortino ratio: %5.4f' %
 long_returns_historical_list = []
 for row in range(long_positions.shape[0]):
     long_returns_historical_list.append(
-        seasonal_return(data,long_positions.iloc[row]['Symbol'],
+        seasonal_return(data, long_positions.iloc[row]['Symbol'],
                         long_positions.iloc[row]['start date'][5:10],
                         long_positions.iloc[row]['end date'], 2013, 2022)['Return'])
 long_returns_historical = pd.concat(long_returns_historical_list)
 
-
 short_returns_historical_list = []
 for row in range(short_positions.shape[0]):
     short_returns_historical_list.append(
-        seasonal_return(data,short_positions.iloc[row]['Symbol'],
+        seasonal_return(data, short_positions.iloc[row]['Symbol'],
                         short_positions.iloc[row]['start date'][5:10],
                         short_positions.iloc[row]['end date'], 2013, 2022)['Return'])
 short_returns_historical = pd.concat(short_returns_historical_list)
 
 # Plot 2023 actual vs 2013-2022 historical
 fig = sns.kdeplot(long_returns_historical, fill=True, color="r",
-    label='Historical (2013-2022)')
+                  label='Historical (2013-2022)')
 fig = sns.kdeplot(long_trade_results['Return'], fill=True, color="b",
-    label='Actual (2023)')
+                  label='Actual (2023)')
 fig.legend(loc='upper right')
 plt.title("Distribution of Seasonal Returns (Long Trades)")
 plt.xlabel('Returns')
@@ -326,9 +326,9 @@ plt.show()
 
 # Note that historical returns are negative
 fig = sns.kdeplot(-short_returns_historical, fill=True, color="r",
-    label='Historical (2013-2022)')
+                  label='Historical (2013-2022)')
 fig = sns.kdeplot(short_trade_results['Return'], fill=True, color="b",
-    label='Actual (2023)')
+                  label='Actual (2023)')
 fig.legend(loc='upper right')
 plt.title("Distribution of Seasonal Returns (Short Trades)")
 plt.xlabel('Returns')
@@ -363,22 +363,22 @@ for idx in range(long_trades.shape[0]):
     sell_date = long_trades.iloc[idx]['sell date']
     buy_price = spx.loc[buy_date]['Adj Close']
     sell_price = spx.loc[sell_date]['Adj Close']
-    sp500_return = sell_price/buy_price-1
-    sp500_returns_long_list.append([idx,buy_date,sell_date,sp500_return])
+    sp500_return = sell_price / buy_price - 1
+    sp500_returns_long_list.append([idx, buy_date, sell_date, sp500_return])
 
 sp500_returns = pd.DataFrame(sp500_returns_long_list,
-                             columns=['Index','Buy Date','Sell Date',
-                             'SP500 Return'])
+                             columns=['Index', 'Buy Date', 'Sell Date',
+                                      'SP500 Return'])
 
 # Avg SP500 returns during the same long positions
-sp500_returns['SP500 Return'].mean() # 1.32% avg return
+sp500_returns['SP500 Return'].mean()  # 1.32% avg return
 
 # Sharpe (assuming risk-free return is just zero): 0.48
-sp500_returns['SP500 Return'].mean()/sp500_returns['SP500 Return'].std()
+sp500_returns['SP500 Return'].mean() / sp500_returns['SP500 Return'].std()
 
 # Sortino Ratio: 1.10
-(sp500_returns['SP500 Return'].mean()/
- sp500_returns[sp500_returns['SP500 Return']<0]['SP500 Return'].std())
+(sp500_returns['SP500 Return'].mean() /
+ sp500_returns[sp500_returns['SP500 Return'] < 0]['SP500 Return'].std())
 
 # Short seasonal trades
 sp500_returns_short_list = []
@@ -389,11 +389,11 @@ for idx in range(short_trades.shape[0]):
     sell_date = short_trades.iloc[idx]['sell date']
     buy_price = spx.loc[buy_date]['Adj Close']
     sell_price = spx.loc[sell_date]['Adj Close']
-    sp500_return = sell_price/buy_price-1
-    sp500_returns_short_list.append([idx,buy_date,sell_date,sp500_return])
+    sp500_return = sell_price / buy_price - 1
+    sp500_returns_short_list.append([idx, buy_date, sell_date, sp500_return])
 
 sp500_returns_short_dates = pd.DataFrame(sp500_returns_short_list,
-    columns=['Index','Buy Date','Sell Date','SP500 Return'])
+                                         columns=['Index', 'Buy Date', 'Sell Date', 'SP500 Return'])
 
 # Avg SP500 returns during the short positions
 # 1.16% avg return
@@ -402,13 +402,13 @@ print('S&P500 long seasonal replication Sharpe: %5.4f' %
 
 # Sharpe: 0.19
 print('S&P500 long seasonal replication Sharpe: %5.3f' %
-      (sp500_returns_short_dates['SP500 Return'].mean()/
+      (sp500_returns_short_dates['SP500 Return'].mean() /
        sp500_returns_short_dates['SP500 Return'].std()))
 
 # Sortino Ratio: 0.67
 print('S&P500 long seasonal replication Sortino: %5.3f' %
-      (sp500_returns['SP500 Return'].mean()/sp500_returns_short_dates[
-          sp500_returns_short_dates['SP500 Return']<0]['SP500 Return'].std()))
+      (sp500_returns['SP500 Return'].mean() / sp500_returns_short_dates[
+          sp500_returns_short_dates['SP500 Return'] < 0]['SP500 Return'].std()))
 
 # Overall, both long and short seasonal strategies have significantly more
 # variability in their returns compared to the S&P500 as a whole. This is to be

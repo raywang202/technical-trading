@@ -10,7 +10,7 @@ import seaborn as sns
 
 # Import SP500 index for 2014-2023
 start_date = '2014-01-01'
-end_date = '2024-01-03' # Get data a few days past end of year to backfill
+end_date = '2024-01-03'  # Get data a few days past end of year to backfill
 spx = pd.DataFrame(yf.download('^SPX', start_date, end_date)['Adj Close'])
 
 all_dates = pd.date_range(start_date, end_date)
@@ -33,7 +33,7 @@ spx['Seasonal Trend Price'] = spx['Adj Close'] / spx['Yr Init Price'] * 100
 
 # Now take averages over the last 10 years
 # Ignore Feb 29 when averaging, since it would only apply to 2016/2020
-spx10yr = spx[['Month Day','Seasonal Trend Price']].groupby('Month Day').mean()
+spx10yr = spx[['Month Day', 'Seasonal Trend Price']].groupby('Month Day').mean()
 spx10yr['plot date'] = list(spx10yr.reset_index()['Month Day'].apply(
     lambda x: datetime.strptime("2000-" + x, "%Y-%m-%d")))
 spx10yr = spx10yr[spx10yr['plot date'] != '2000-02-29']
@@ -45,7 +45,7 @@ for label, dfy in spx.assign(
         year=spx.index.strftime('%Y')
 ).groupby('year'):
     dfy.set_index('date')['Seasonal Trend Price'].plot(ax=ax, label=str(label),
-        linewidth=1)
+                                                       linewidth=1)
 
 ax.plot(spx10yr['plot date'], spx10yr['Seasonal Trend Price'],
         label='10 year trend', linewidth=3.0, linestyle='dashed', color='black')
@@ -108,11 +108,10 @@ for label, dfy in spx5yr.groupby('Yr Group'):
     dfy.set_index('plot date')['Seasonal Trend Price'].plot(
         ax=ax, label=str(label))
 
-spxavg = spx[['Month Day','Seasonal Trend Price']].groupby('Month Day').mean()
+spxavg = spx[['Month Day', 'Seasonal Trend Price']].groupby('Month Day').mean()
 spxavg['plot date'] = list(spxavg.reset_index()['Month Day'].apply(
     lambda x: datetime.strptime("2000-" + x, "%Y-%m-%d")))
 spxavg = spxavg[spxavg['plot date'] != '2000-02-29']
-
 
 ax.plot(spxavg['plot date'], spxavg['Seasonal Trend Price'],
         label='35 year trend', linewidth=3.0, linestyle='dashed', color='black')
@@ -152,7 +151,7 @@ plt.show()
 # Tbill.csv is pulled from https://fred.stlouisfed.org/series/DTB3
 # and has annualized rates: divide by 12/3 = 4 to get 3-month returns
 
-tbill = pd.read_csv('Tbill.csv')
+tbill = pd.read_csv('files/Tbill.csv')
 tbill['Year'] = tbill.DATE.str.slice(stop=4).astype(int)
 tbill['month'] = tbill.DATE.str.slice(start=5, stop=7)
 
@@ -162,12 +161,14 @@ tbill_strategy = (tbill[tbill.month.isin(['01', '04', '07', '10'])].assign(
     bondreturn=1 + tbill.TB3MS / (4 * 100)
 ).groupby('Year').bondreturn.prod() - 1).reset_index(name='T-bill return')
 
+
 # Strat 2: Hold SP500: buy as soon as possible after Jan 1 and sell as soon as
 # possible after Dec 31
 def yearly_return(x):
     start_val = x[x['Month Day'] == '01-01']['Adj Close'].values[0]
     end_val = x[x['Month Day'] == '12-31']['Adj Close'].values[0]
     return end_val / start_val - 1
+
 
 sp500_strategy = spx.groupby('Year').apply(yearly_return).reset_index(
     name='SP500 return')
@@ -181,6 +182,7 @@ def mar_return(x):
     start_val = x[x['Month Day'] == '03-01']['Adj Close'].values[0]
     end_val = x[x['Month Day'] == '12-31']['Adj Close'].values[0]
     return end_val / start_val - 1
+
 
 mar_returns = spx.groupby('Year').apply(mar_return).reset_index(
     name='Mar onwards SP500 return')
@@ -200,61 +202,63 @@ strats = tbill_strategy[['Year', 'T-bill return']].merge(
     sp500_strategy[['Year', 'SP500 return']], on='Year').merge(
     seasonal_strategy[['Year', 'Seasonal return']], on='Year')
 
-strats['SP500 excess'] = strats['SP500 return']-strats['T-bill return']
-strats['Seasonal excess'] = strats['Seasonal return']-strats['T-bill return']
+strats['SP500 excess'] = strats['SP500 return'] - strats['T-bill return']
+strats['Seasonal excess'] = strats['Seasonal return'] - strats['T-bill return']
 
 
 def sharpe(df, strat_name, risk_free):
-    excess_return = df[strat_name]-df[risk_free]
-    return excess_return.mean()/excess_return.std()
+    excess_return = df[strat_name] - df[risk_free]
+    return excess_return.mean() / excess_return.std()
+
 
 def sortino(df, strat_name, risk_free, threshold):
-    excess_return = df[strat_name]-df[risk_free]
-    downside = excess_return[(excess_return<df[threshold])]
-    denom = np.sqrt(sum(downside*downside)/len(downside))
-    return excess_return.mean()/denom
+    excess_return = df[strat_name] - df[risk_free]
+    downside = excess_return[(excess_return < df[threshold])]
+    denom = np.sqrt(sum(downside * downside) / len(downside))
+    return excess_return.mean() / denom
+
 
 df = pd.DataFrame(
-    {'Strategy' : ['SP500','Seasonal SP500'],
-    'Mean Excess Return' : [strats['SP500 excess'].mean(),
-    strats['Seasonal excess'].mean()],
-    'Excess Return Ann Vol': [strats['SP500 excess'].std(),
-    strats['Seasonal excess'].std()],
-    'Sharpe Ratio' : [sharpe(strats,'SP500 return','T-bill return'),
-    sharpe(strats,'Seasonal return','T-bill return')],
-    'Sortino Ratio' : [sortino(strats,'SP500 return','T-bill return',
-        'T-bill return'),sortino(strats,'Seasonal return','T-bill return',
-        'T-bill return')]})
+    {'Strategy': ['SP500', 'Seasonal SP500'],
+     'Mean Excess Return': [strats['SP500 excess'].mean(),
+                            strats['Seasonal excess'].mean()],
+     'Excess Return Ann Vol': [strats['SP500 excess'].std(),
+                               strats['Seasonal excess'].std()],
+     'Sharpe Ratio': [sharpe(strats, 'SP500 return', 'T-bill return'),
+                      sharpe(strats, 'Seasonal return', 'T-bill return')],
+     'Sortino Ratio': [sortino(strats, 'SP500 return', 'T-bill return',
+                               'T-bill return'), sortino(strats, 'Seasonal return', 'T-bill return',
+                                                         'T-bill return')]})
 
 # Repeat for just last 10 years
-strats_sub = strats[strats.Year>=2014]
+strats_sub = strats[strats.Year >= 2014]
 
 df_sub = pd.DataFrame(
-    {'Strategy' : ['SP500','Seasonal SP500'],
-    'Mean Excess Return' : [strats_sub['SP500 excess'].mean(),
-    strats_sub['Seasonal excess'].mean()],
-    'Excess Return Ann Vol': [strats_sub['SP500 excess'].std(),
-    strats_sub['Seasonal excess'].std()],
-    'Sharpe Ratio' : [sharpe(strats_sub,'SP500 return','T-bill return'),
-    sharpe(strats_sub,'Seasonal return','T-bill return')],
-    'Sortino Ratio' : [sortino(strats_sub,'SP500 return','T-bill return',
-        'T-bill return'), sortino(strats_sub,'Seasonal return','T-bill return',
-        'T-bill return')]})
+    {'Strategy': ['SP500', 'Seasonal SP500'],
+     'Mean Excess Return': [strats_sub['SP500 excess'].mean(),
+                            strats_sub['Seasonal excess'].mean()],
+     'Excess Return Ann Vol': [strats_sub['SP500 excess'].std(),
+                               strats_sub['Seasonal excess'].std()],
+     'Sharpe Ratio': [sharpe(strats_sub, 'SP500 return', 'T-bill return'),
+                      sharpe(strats_sub, 'Seasonal return', 'T-bill return')],
+     'Sortino Ratio': [sortino(strats_sub, 'SP500 return', 'T-bill return',
+                               'T-bill return'), sortino(strats_sub, 'Seasonal return', 'T-bill return',
+                                                         'T-bill return')]})
 
 # Can look at the two tables directly
 # df or df_sub
 
 # plotting both distibutions on the same figure
-fig = sns.kdeplot(strats['SP500 excess'], fill=True, color="r",label='SP500')
-fig = sns.kdeplot(strats['Seasonal excess'], fill=True, color="b",label='Seasonal')
+fig = sns.kdeplot(strats['SP500 excess'], fill=True, color="r", label='SP500')
+fig = sns.kdeplot(strats['Seasonal excess'], fill=True, color="b", label='Seasonal')
 fig.legend(loc='upper right')
 plt.title("Distribution of Yearly Excess Returns rel. to T-bills (since 1989)")
 plt.xlabel('Annual Excess Returns')
 plt.show()
 
 # plotting returns, just to 2014
-fig = sns.kdeplot(strats_sub['SP500 excess'], fill=True, color="r",label='SP500')
-fig = sns.kdeplot(strats_sub['Seasonal excess'], fill=True, color="b",label='Seasonal')
+fig = sns.kdeplot(strats_sub['SP500 excess'], fill=True, color="r", label='SP500')
+fig = sns.kdeplot(strats_sub['Seasonal excess'], fill=True, color="b", label='Seasonal')
 fig.legend(loc='upper right')
 plt.title("Distribution of Yearly Excess Returns rel. to T-bills (since 2014)")
 plt.xlabel('Annual Excess Returns')
@@ -273,13 +277,13 @@ plt.show()
 # Euro Stoxx 50 (Europe): FEZ
 # Nikkei 225 (Japan): ^N225
 
-indices = ['^DJI','^NDX','FEZ','^N225']
+indices = ['^DJI', '^NDX', 'FEZ', '^N225']
 start_date = '2014-01-01'
 end_date = '2024-01-04'
 
 other_prices = pd.DataFrame(yf.download(indices, start_date, end_date)['Adj Close'])
 other_prices.rename(columns={"^DJI": "DJIA", "^NDX": "NASDAQ100", "FEZ": "Euro Stoxx 50",
-                            "^N225": "Nikkei 225"},inplace=True)
+                             "^N225": "Nikkei 225"}, inplace=True)
 
 all_dates = pd.date_range(start_date, end_date)
 other_prices['Price Date'] = other_prices.index
@@ -288,29 +292,29 @@ other_prices['Price Date'] = other_prices.index
 # some of the trading data will have NaNs. Since this is just an illustrative
 # example, backfill with the most recent price on the exchange, afterwards.
 # Then backfill again for every day of the year.
-other_prices=other_prices.bfill()
+other_prices = other_prices.bfill()
 other_prices = other_prices.reindex(all_dates, method='bfill')
 other_prices = other_prices[other_prices.index < '2024-01-01']
 
 # Normalize prices relative to first of the year
 other_prices['Year'] = other_prices.index.year
 other_prices['Month Day'] = other_prices.index.strftime('%m-%d')
-for name in ['DJIA','NASDAQ100','Euro Stoxx 50','Nikkei 225']:
-    other_prices[name+' Yr Init Price'] = other_prices.groupby('Year', sort=False).transform(
-    'first')[name]
-    other_prices[name+' Seasonal'] = (other_prices[name] /
-                                        other_prices[name+' Yr Init Price'] * 100)
-other_seasonal = other_prices[['Month Day','DJIA Seasonal','NASDAQ100 Seasonal',
-                        'Euro Stoxx 50 Seasonal','Nikkei 225 Seasonal']].groupby('Month Day').mean()
+for name in ['DJIA', 'NASDAQ100', 'Euro Stoxx 50', 'Nikkei 225']:
+    other_prices[name + ' Yr Init Price'] = other_prices.groupby('Year', sort=False).transform(
+        'first')[name]
+    other_prices[name + ' Seasonal'] = (other_prices[name] /
+                                        other_prices[name + ' Yr Init Price'] * 100)
+other_seasonal = other_prices[['Month Day', 'DJIA Seasonal', 'NASDAQ100 Seasonal',
+                               'Euro Stoxx 50 Seasonal', 'Nikkei 225 Seasonal']].groupby('Month Day').mean()
 other_seasonal['plot date'] = list(other_seasonal.reset_index()['Month Day'].apply(
     lambda x: datetime.strptime("2000-" + x, "%Y-%m-%d")))
 other_seasonal = other_seasonal[other_seasonal['plot date'] != '2000-02-29']
 
 # Plot
 fig, ax = plt.subplots()
-for name in ['DJIA','NASDAQ100','Euro Stoxx 50','Nikkei 225']:
-    ax.plot(other_seasonal['plot date'], other_seasonal[name+' Seasonal'],
-            label=name+' Seasonal', linewidth=3.0, linestyle='dashed')
+for name in ['DJIA', 'NASDAQ100', 'Euro Stoxx 50', 'Nikkei 225']:
+    ax.plot(other_seasonal['plot date'], other_seasonal[name + ' Seasonal'],
+            label=name + ' Seasonal', linewidth=3.0, linestyle='dashed')
 
 ax.axhline(y=100, color='blue')
 
