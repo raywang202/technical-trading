@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from itertools import product
 
@@ -623,6 +624,27 @@ print('Average return in random forest trades: %5.3f' %
       long_2023[rf_trade_2023 == 1]['actual_return'].mean())
 print('Std Dev of returns in random forest trades: %5.3f' %
       long_2023[rf_trade_2023 == 1]['actual_return'].std())
+
+# Another way to visualize this: look at the distribution of realized returns
+# in stocks recommended under both strategies. It's clear th
+
+long_2023[(rf_trade_2023==1) & (long_2023['outcome']==1)]['actual_return'].mean()
+long_2023[(rf_trade_2023==1) & (long_2023['outcome']==0)]['actual_return'].mean()
+long_2023[(long_2023['outcome']==0)]['actual_return'].mean()
+long_2023['actual_return'].mean()
+
+long_2023['actual_return']
+
+fig = sns.kdeplot(long_2023['actual_return'], fill=True, color="r",
+    label='Naked Seasonal 2023')
+fig = sns.kdeplot(long_2023[(rf_trade_2023==1)]['actual_return'], fill=True,
+    color="b",label='RFC 2023')
+fig.legend(loc='upper right')
+plt.title("Distribution of 2023 Returns (Long Trades)")
+plt.xlabel('Returns')
+plt.show()
+
+
 
 # Part 5: Performance metrics for 2022/2023
 
